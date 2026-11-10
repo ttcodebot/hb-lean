@@ -3,12 +3,14 @@
 and deletes PDK views they did not touch. In `lib` views (timing corners, chosen by config) only touched files stay."""
 import os, re, shutil, sys
 
-used = [l.strip() for l in open(sys.argv[1]) if l.strip()]
+used = sorted({os.path.normpath(l.strip()) for l in open(sys.argv[1]) if l.strip()})
 closure = set(open(sys.argv[2]).read().split())
 store = sorted({p.split("/")[3] for p in used if p.startswith("/nix/store/")} & closure)
 open("keep.list", "w").write("".join(f"nix/store/{n}\n" for n in store))
 print(f"nix: {len(store)} of {len(closure)} closure paths kept")
 
+# libs.tech directories for analog simulation and schematic tools: a tree walk touches them, the flow does not read them.
+SIM_ONLY = {"xschem", "ngspice", "xyce", "gnucap", "qucs-s", "verilog-a", "openems", "palace", "gdsfactory", "qflow", "irsim", "xcircuit", "combined"}
 pdk = sys.argv[3]
 views, files = set(), set()
 for p in used:
@@ -22,7 +24,7 @@ for top in ("libs.ref", "libs.tech"):
         subs = [f"{top}/{a}"] if top == "libs.tech" else [f"{top}/{a}/{b}" for b in sorted(os.listdir(os.path.join(pdk, top, a)))]
         for v in subs:
             full = os.path.join(pdk, v)
-            if v not in views:
+            if v not in views or v.split("/")[-1] in SIM_ONLY:
                 shutil.rmtree(full) if os.path.isdir(full) and not os.path.islink(full) else os.remove(full)
             elif v.endswith("/lib") and os.path.isdir(full):
                 for f in os.listdir(full):
