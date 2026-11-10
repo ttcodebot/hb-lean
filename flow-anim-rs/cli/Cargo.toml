@@ -1,0 +1,11 @@
+[package]
+name = "flowanim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+flowanim-core = { path = "../core" }
+png = "0.18"
+gif = "0.14"
+libwebp-sys = { version = "0.14", features = ["sse41", "avx2"] }
+rayon = "1"

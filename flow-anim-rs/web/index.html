@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardening animation - Rust/WASM renderer</title>
+<style>
+  html, body { margin: 0; background: #0b0f16; color: #e6edf3; font-family: system-ui, sans-serif; }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  canvas { display: block; width: 100%; height: auto; aspect-ratio: 1200 / 630; }
+  .bar { display: flex; gap: 10px; align-items: center; padding: 8px 12px; }
+  .bar button { background: #1a2230; color: #e6edf3; border: 1px solid #34415a; border-radius: 6px; padding: 5px 12px; font-size: 14px; cursor: pointer; }
+  .bar input[type=range] { flex: 1; accent-color: #ffd166; }
+  #info { color: #7d8ba0; font-size: 12px; min-width: 16em; text-align: right; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="c" width="1200" height="630"></canvas>
+  <div class="bar">
+    <button id="pp">Pause</button>
+    <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
+    <span id="info"></span>
+  </div>
+</div>
+<script>
+// ?wasm=flowanim-o3.wasm&scene=scene-gf.json
+(async () => {
+  const q = new URLSearchParams(location.search);
+  const [wasmBuf, sceneBuf] = await Promise.all([
+    fetch(q.get('wasm') || 'flowanim-o3.wasm').then((r) => r.arrayBuffer()),
+    fetch(q.get('scene') || 'scene-gf.json').then((r) => r.arrayBuffer()),
+  ]);
+  const t0 = performance.now();
+  const { instance } = await WebAssembly.instantiate(wasmBuf, {});
+  const x = instance.exports;
+  const scene = new Uint8Array(sceneBuf);
+  const p = x.alloc(scene.length);
+  new Uint8Array(x.memory.buffer, p, scene.length).set(scene);
+  const duration = x.init(p, scene.length);
+  if (duration < 0) throw new Error('scene did not parse');
+  const initMs = performance.now() - t0;
+  const W = x.width(), H = x.height();
+  const ctx = document.getElementById('c').getContext('2d');
+  let image = null;
+  function renderAt(t) {
+    x.render(t);
+    // the buffer moves if wasm memory grows, so re-wrap when detached
+    if (!image || image.data.buffer !== x.memory.buffer) image = new ImageData(new Uint8ClampedArray(x.memory.buffer, x.frame_ptr(), W * H * 4), W, H);
+    ctx.putImageData(image, 0, 0);
+  }
+  const pp = document.getElementById('pp'), seek = document.getElementById('seek'), info = document.getElementById('info');
+  let playing = true, tcur = 0, last = performance.now(), acc = 0, cnt = 0;
+  function frame(now) {
+    if (playing) {
+      tcur += (now - last) / 1000;
+      if (tcur >= duration + 1.2) tcur = 0;
+      const a = performance.now();
+      renderAt(Math.min(tcur, duration));
+      acc += performance.now() - a; cnt++;
+      if (cnt === 30) { info.textContent = (acc / cnt).toFixed(1) + ' ms / frame (wasm draw + blit)'; acc = cnt = 0; }
+      seek.value = Math.min(1000, (tcur / duration) * 1000);
+    }
+    last = now;
+    requestAnimationFrame(frame);
+  }
+  pp.onclick = () => { playing = !playing; pp.textContent = playing ? 'Pause' : 'Play'; };
+  seek.oninput = () => { playing = false; pp.textContent = 'Play'; tcur = (seek.value / 1000) * duration; renderAt(tcur); };
+  window.flowAnim = { duration, renderAt, initMs, pause() { playing = false; } };
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

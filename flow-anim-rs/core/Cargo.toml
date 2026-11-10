@@ -1,0 +1,10 @@
+[package]
+name = "flowanim-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+ttf-parser = { version = "0.25", default-features = false, features = ["std", "opentype-layout"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
