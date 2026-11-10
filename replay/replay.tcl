@@ -25,7 +25,11 @@ proc source {args} {
         set ::replay_io 1
         rename read_current_odb _replay_read_current_odb
         proc read_current_odb {args} {
-            if { !$::replay_db } { _replay_read_current_odb; set ::replay_db 1 }
+            if { !$::replay_db } {
+                _replay_read_current_odb; set ::replay_db 1
+            } elseif { [info exists ::env(REPLAY_RESDC)] } {
+                read_current_sdc
+            }
         }
         proc exit_unless_gui {args} { return -code return }
         return

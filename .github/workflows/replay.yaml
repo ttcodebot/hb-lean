@@ -80,11 +80,17 @@ jobs:
           openroad -exit -no_splash -metrics /tmp/replay-noreports/metrics.json $GITHUB_WORKSPACE/exp/replay/replay.tcl > /tmp/replay-noreports/replay.log 2>&1 || { tail -60 /tmp/replay-noreports/replay.log; exit 1; }
           echo "replay without report steps wall: $(python3 -c "import time;print(round(time.time()-$START,2))") s" | tee -a $GITHUB_STEP_SUMMARY
           grep REPLAY_ /tmp/replay-noreports/replay.log
+          mkdir -p /tmp/replay-resdc
+          export REPLAY_OUT=/tmp/replay-resdc REPLAY_RESDC=1
+          openroad -exit -no_splash $GITHUB_WORKSPACE/exp/replay/replay.tcl > /tmp/replay-resdc/replay.log 2>&1 || tail -30 /tmp/replay-resdc/replay.log
+          unset REPLAY_RESDC
+          grep REPLAY_TOTAL /tmp/replay-resdc/replay.log || true
           sig() { grep -hE "Inserted [0-9]+ (buffers|tie|hold)|Found [0-9]+ (slew|fanout|cap|long)|Total wire length = |Number of violations|Total number of vias|Clock .* Sinks|Created [0-9]+ clock|design__instance__count |HPWL after|Complete detail routing" "$@" | sed 's/ *$//' ; }
           echo "== signature: LibreLane"; cat $(for d in $STEPS; do ls $d/*.log; done) | sig /dev/stdin | tee /tmp/sig-ll.txt
           echo "== signature: replay"; sig /tmp/replay-out/replay-2.log | tee /tmp/sig-replay.txt
           echo "== signature: replay without report steps"; sig /tmp/replay-noreports/replay.log | tee /tmp/sig-nr.txt
           echo "== diff LibreLane vs replay"; diff /tmp/sig-ll.txt /tmp/sig-replay.txt && echo IDENTICAL || true
+          echo "== diff LibreLane vs replay re-reading SDC each step"; sig /tmp/replay-resdc/replay.log > /tmp/sig-resdc.txt; diff /tmp/sig-ll.txt /tmp/sig-resdc.txt && echo IDENTICAL || true
           echo "== diff LibreLane vs replay-noreports"; diff /tmp/sig-ll.txt /tmp/sig-nr.txt && echo IDENTICAL || true
       - name: Upload
         if: success() || failure()

@@ -122,7 +122,7 @@ jobs:
                       tgt = os.path.normpath(os.path.join(os.path.dirname(cur), os.readlink(cur)))
                       stack = [x for x in tgt.split("/") if x] + stack
                       cur = "/"
-              if os.path.isfile(cur) or os.path.islink(cur): seen.add(cur)
+              if os.path.lexists(cur): seen.add(cur)
           with open("/tmp/accessed.txt", "w") as f:
               for p in sorted(seen):
                   sz = os.path.getsize(p) if os.path.isfile(p) and not os.path.islink(p) else 0
