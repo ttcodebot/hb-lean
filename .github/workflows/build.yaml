@@ -1,0 +1,82 @@
+name: build
+on:
+  workflow_dispatch:
+    inputs:
+      pdk:
+        type: choice
+        options: [sky130A, gf180mcuD, ihp-sg13cmos5l]
+      prune:
+        description: "PDK prune list file under pdk-keep/ (empty: keep all)"
+        default: ""
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: TinyTapeout/tt-support-tools
+          path: tt
+      - name: Settings
+        run: |
+          case "${{ inputs.pdk }}" in
+            sky130A) LL=3.0.14 FAM=sky130 VER=8afc8346a57fe1ab7934ba5a6056ea8b43078e71 TAG=sky ;;
+            gf180mcuD) LL=3.0.14 FAM=gf180mcu VER=54435919abffb937387ec956209f9cf5fd2dfbee TAG=gf ;;
+            ihp-sg13cmos5l) LL=3.1.0.dev4 FAM=ihp-sg13 VER=89d42ee6d2fd9b50b86a1aada6fee6673c3e6008 TAG=ihp ;;
+          esac
+          echo "LL=$LL" >> $GITHUB_ENV; echo "FAM=$FAM" >> $GITHUB_ENV; echo "VER=$VER" >> $GITHUB_ENV; echo "TAG=$TAG" >> $GITHUB_ENV
+      - name: Export tool closure from the LibreLane image
+        run: |
+          IMG=ghcr.io/librelane/librelane:$LL
+          docker pull -q $IMG
+          mkdir -p ctx
+          sed 's#^#nix/store/#' closure/keep-$LL.txt > keep.list
+          docker export $(docker create $IMG) | sudo tar -x -C ctx -T keep.list
+          docker inspect --format '{{json .Config.Env}}' $IMG > env.json
+          python3 - <<'PY' >> $GITHUB_ENV
+          import json, os
+          env = dict(e.split("=", 1) for e in json.load(open("env.json")))
+          dirs = [p for p in env["PATH"].split(":") if p.startswith("/nix/store") and os.path.isdir("ctx" + p)]
+          print("NIX_PATH_DIRS=" + ":".join(dirs))
+          print("NIX_PYTHONPATH_ARG=" + env["NIX_PYTHONPATH"])
+          PY
+          sudo du -sh ctx/nix
+      - name: Extra KLayout for precheck (gf180mcuD needs >= 0.30.8)
+        if: inputs.pdk == 'gf180mcuD'
+        run: |
+          IMG=ghcr.io/librelane/librelane:3.1.0.dev4
+          docker pull -q $IMG
+          sed 's#^#nix/store/#' closure/keep-klayout-3.1.0.dev4.txt > keep2.list
+          docker export $(docker create $IMG) | sudo tar -x -C ctx -T keep2.list
+          echo "PRECHECK_TOOLS=/nix/store/$(grep -E '^.{33}klayout-[0-9.]+$' closure/keep-klayout-3.1.0.dev4.txt)/bin" >> $GITHUB_ENV
+          sudo du -sh ctx/nix
+      - name: Fetch PDK with the image's own ciel
+        run: |
+          mkdir -p ctx/pdk
+          docker run --rm -v $PWD/ctx/pdk:/pdk ghcr.io/librelane/librelane:$LL ciel enable --pdk-root /pdk --pdk-family $FAM $VER
+          sudo chown -R $USER ctx/pdk
+          V=ctx/pdk/ciel/$FAM/versions/$VER
+          ls -la ctx/pdk $V
+          for d in $V/*/; do n=$(basename $d); if [ "$n" != "${{ inputs.pdk }}" ]; then rm -rf "$d" "ctx/pdk/$n"; fi; done
+          if [ -n "${{ inputs.prune }}" ]; then
+            P=$V/${{ inputs.pdk }}
+            ( cd $P && for d in libs.ref/*/* libs.tech/*; do grep -qxF "$d" $GITHUB_WORKSPACE/pdk-keep/${{ inputs.prune }} || rm -rf "$d"; done )
+          fi
+          du -sh ctx/pdk; du -sh $V/*/libs.*/* | sort -h | tail -40
+      - name: Build and push
+        run: |
+          cp tt/requirements.txt ctx/tt-requirements.txt
+          cp tt/precheck/requirements.txt ctx/precheck-requirements.txt
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker buildx create --use --driver docker-container
+          NAME=ghcr.io/${{ github.repository }}
+          ARGS=(--provenance=false --build-arg "NIX_PATH_DIRS=$NIX_PATH_DIRS" --build-arg "NIX_PYTHONPATH_ARG=$NIX_PYTHONPATH_ARG" --build-arg "PRECHECK_TOOLS=$PRECHECK_TOOLS" --build-arg "PDK=${{ inputs.pdk }}" -f Dockerfile ctx)
+          sudo chmod -R a+rX ctx
+          docker buildx build "${ARGS[@]}" --output type=image,name=$NAME:$TAG,push=true
+          docker buildx build "${ARGS[@]}" --output type=image,name=$NAME:$TAG-zstd,push=true,compression=zstd,compression-level=3,force-compression=true
+          for t in $TAG $TAG-zstd; do
+            echo "== $t"; docker buildx imagetools inspect --raw $NAME:$t | jq -r '.layers[] | "\(.size) \(.mediaType)"' | tee /dev/stderr | awk '{s+=$1} END {printf "total %.0f MB\n", s/1e6}'
+          done

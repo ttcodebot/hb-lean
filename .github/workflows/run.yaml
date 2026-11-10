@@ -1,0 +1,86 @@
+name: run
+run-name: "${{ inputs.project }} on ${{ inputs.image }}"
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "ttcodebot repo to harden"
+        required: true
+      image:
+        description: "image tag (sky, gf, ihp, with optional -zstd)"
+        required: true
+      tt_args:
+        description: "extra tt_tool.py args"
+        default: ""
+permissions:
+  contents: read
+  packages: read
+jobs:
+  gds:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/${{ github.repository }}:${{ inputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      TT_ARGS: ${{ inputs.tt_args }}
+    steps:
+      - name: checkout project
+        uses: actions/checkout@v6
+        with:
+          repository: ttcodebot/${{ inputs.project }}
+          submodules: recursive
+      - name: checkout tt-support-tools
+        uses: actions/checkout@v6
+        with:
+          repository: TinyTapeout/tt-support-tools
+          path: tt
+      - name: Fetch verilog and build config
+        run: /opt/tt/bin/python tt/tt_tool.py --create-user-config $TT_ARGS
+      - name: Harden
+        run: /opt/tt/bin/python tt/tt_tool.py --harden --no-docker $TT_ARGS
+      - name: Summaries
+        run: |
+          /opt/tt/bin/python tt/tt_tool.py --print-warnings $TT_ARGS >> $GITHUB_STEP_SUMMARY
+          /opt/tt/bin/python tt/tt_tool.py --print-stats $TT_ARGS >> $GITHUB_STEP_SUMMARY
+          /opt/tt/bin/python tt/tt_tool.py --print-cell-category $TT_ARGS >> $GITHUB_STEP_SUMMARY
+      - name: Publish build logs
+        if: success() || failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: GDS_logs
+          path: |
+            src/*
+            runs/wokwi/*
+      - name: Prepare tt_submission
+        run: /opt/tt/bin/python tt/tt_tool.py --create-tt-submission $TT_ARGS
+      - name: Publish tt_submission
+        uses: actions/upload-artifact@v7
+        with:
+          name: tt_submission
+          path: |
+            src/*
+            docs/*
+            tt_submission/*
+            info.yaml
+            LICENSE
+      - name: Render PNG
+        run: /opt/tt/bin/python tt/tt_tool.py --create-png $TT_ARGS 2>&1 || echo "WARNING: PNG render failed"
+      - name: Upload PNG
+        uses: actions/upload-artifact@v7
+        with:
+          name: gds_render
+          path: gds_render.png
+      - name: Precheck
+        working-directory: tt/precheck
+        run: |
+          export PATH="${PRECHECK_TOOLS:+$PRECHECK_TOOLS:}/opt/precheck/bin:$PATH"
+          klayout -v
+          /opt/precheck/bin/python precheck.py --gds $GITHUB_WORKSPACE/tt_submission/*.gds* --tech $PDK
+      - name: Upload precheck reports
+        if: success() || failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: precheck_reports
+          path: tt/precheck/reports
