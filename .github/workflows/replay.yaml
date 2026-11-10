@@ -50,12 +50,11 @@ jobs:
       - name: Replay PnR steps in one OpenROAD process
         run: |
           cd runs/wokwi
-          ls -la *-openroad-cts/ /tmp/wrap; cat *-openroad-cts/COMMANDS; echo "PATH=$PATH"; command -v openroad
           STEPS=""
           for d in [0-9]*-openroad-*; do
             n=${d%%-*}
             [ -f $d/_proc_env ] && [ -f $d/COMMANDS ] || continue
-            head -1 $d/COMMANDS | grep -q -- "-python" && continue
+            head -1 $d/COMMANDS | grep -q -- " -python " && continue
             head -1 $d/COMMANDS | grep -qE "^openroad .*openroad/(gpl|repair_design|dpl|cts|rsz_timing_postcts|rsz_timing_postgrt|repair_design_postgrt|grt|antenna_check|antenna_repair|drt|fill|sta/corner)\.tcl$" || continue
             [ "$((10#$n))" -ge "$((10#$(ls -d *-openroad-globalplacement | head -1 | cut -d- -f1)))" ] || continue
             [ "$((10#$n))" -le "$((10#$(ls -d *-openroad-fillinsertion | head -1 | cut -d- -f1)))" ] || continue
