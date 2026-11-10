@@ -1,0 +1,85 @@
+name: replay
+run-name: "replay ${{ inputs.project }} on ${{ inputs.image }}"
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        required: true
+      image:
+        required: true
+      tt_args:
+        default: ""
+permissions:
+  contents: read
+  packages: read
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/${{ github.repository }}:${{ inputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      TT_ARGS: ${{ inputs.tt_args }}
+    steps:
+      - name: checkout project
+        uses: actions/checkout@v6
+        with:
+          repository: ttcodebot/${{ inputs.project }}
+          submodules: recursive
+      - name: checkout tt-support-tools
+        uses: actions/checkout@v6
+        with:
+          repository: TinyTapeout/tt-support-tools
+          path: tt
+      - name: checkout experiment
+        uses: actions/checkout@v6
+        with:
+          path: exp
+      - name: Fetch verilog and build config
+        run: /opt/tt/bin/python tt/tt_tool.py --create-user-config $TT_ARGS
+      - name: Harden with LibreLane (recording each OpenROAD step's environment)
+        run: |
+          export REAL_OPENROAD=$(command -v openroad)
+          mkdir -p /tmp/wrap && cp exp/replay/openroad-wrapper.sh /tmp/wrap/openroad
+          export PATH=/tmp/wrap:$PATH
+          START=$(date +%s.%N)
+          /opt/tt/bin/python tt/tt_tool.py --harden --no-docker $TT_ARGS
+          echo "LIBRELANE_WALL=$(echo "$(date +%s.%N) - $START" | bc -l 2>/dev/null || python3 -c "import time;print(time.time()-$START)")" >> $GITHUB_ENV
+      - name: Replay PnR steps in one OpenROAD process
+        run: |
+          cd runs/wokwi
+          STEPS=""
+          for d in [0-9]*-openroad-*; do
+            n=${d%%-*}
+            [ -f $d/_proc_env ] && [ -f $d/COMMANDS ] || continue
+            head -1 $d/COMMANDS | grep -q -- "-python" && continue
+            head -1 $d/COMMANDS | grep -qE "^openroad .*openroad/(gpl|repair_design|dpl|cts|rsz_timing_postcts|rsz_timing_postgrt|repair_design_postgrt|grt|antenna_check|antenna_repair|drt|fill|sta/corner)\.tcl$" || continue
+            [ "$((10#$n))" -ge "$((10#$(ls -d *-openroad-globalplacement | head -1 | cut -d- -f1)))" ] || continue
+            [ "$((10#$n))" -le "$((10#$(ls -d *-openroad-fillinsertion | head -1 | cut -d- -f1)))" ] || continue
+            STEPS="$STEPS $PWD/$d"
+          done
+          echo "steps:$STEPS" | tr ' ' '\n'
+          mkdir -p /tmp/replay-out
+          export REPLAY_STEPS="$STEPS" REPLAY_OUT=/tmp/replay-out
+          for run in 1 2; do
+            START=$(python3 -c "import time;print(time.time())")
+            openroad -exit -no_splash -metrics /tmp/replay-out/metrics.json $GITHUB_WORKSPACE/exp/replay/replay.tcl > /tmp/replay-out/replay-$run.log 2>&1 || { tail -60 /tmp/replay-out/replay-$run.log; exit 1; }
+            WALL=$(python3 -c "import time;print(round(time.time()-$START,2))")
+            echo "replay run $run wall: $WALL s"
+          done
+          grep -E "REPLAY_|Total wire length|wirelength" /tmp/replay-out/replay-2.log | tail -40
+          python3 $GITHUB_WORKSPACE/exp/replay/compare.py . /tmp/replay-out/replay-2.log $WALL | tee -a $GITHUB_STEP_SUMMARY
+          echo "LibreLane harden wall: $LIBRELANE_WALL s" | tee -a $GITHUB_STEP_SUMMARY
+          ls -la /tmp/replay-out
+          echo "== LibreLane final wire length"; grep -h "Total wire length" *-openroad-detailedrouting/*.log | tail -2
+      - name: Upload
+        if: success() || failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: replay
+          path: |
+            /tmp/replay-out
+            runs/wokwi/*/runtime.txt
+            runs/wokwi/flow.log
