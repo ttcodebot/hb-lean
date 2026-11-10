@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardening animation - __DESIGN__</title>
+<style>
+  html, body { margin: 0; background: #0b0f16; color: #e6edf3; font-family: system-ui, sans-serif; }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  canvas { display: block; width: 100%; height: auto; aspect-ratio: 1200 / 630; }
+  .bar { display: flex; gap: 10px; align-items: center; padding: 8px 12px; }
+  .bar button, .bar select { background: #1a2230; color: #e6edf3; border: 1px solid #34415a; border-radius: 6px; padding: 5px 12px; font-size: 14px; cursor: pointer; }
+  .bar input[type=range] { flex: 1; accent-color: #ffd166; }
+  .note { color: #7d8ba0; font-size: 12px; padding: 0 12px 10px; line-height: 1.4; }
+  body.capture .bar, body.capture .note { display: none; }
+  body.capture .wrap { max-width: none; width: 1200px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="c" width="1200" height="630"></canvas>
+  <div class="bar">
+    <button id="pp">Pause</button>
+    <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
+    <select id="spd" aria-label="Speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select>
+  </div>
+  <div class="note">Built from the LibreLane per-step DEF snapshots, the global-route guide file and step logs of this run. Positions between snapshots are interpolated; the starting cluster of global placement and the layer-by-layer order of routing are presentation choices, not tool output. Step times are the measured step runtimes.</div>
+</div>
+<script>const SCENE = __SCENE__;</script>
+<script>__PLAYER__</script>
+<script>
+(function () {
+  const fa = window.flowAnim, pp = document.getElementById('pp'), seek = document.getElementById('seek');
+  if (location.hash === '#capture') { document.body.classList.add('capture'); return; }
+  fa.onTick = (t) => { seek.value = Math.min(1000, (t / fa.duration) * 1000); };
+  pp.onclick = () => { if (fa.playing) { fa.pause(); pp.textContent = 'Play'; } else { fa.play(); pp.textContent = 'Pause'; } };
+  seek.oninput = () => { fa.pause(); pp.textContent = 'Play'; fa.renderAt((seek.value / 1000) * fa.duration); };
+  document.getElementById('spd').onchange = (e) => { fa.speed = parseFloat(e.target.value); };
+  window.addEventListener('resize', () => fa.resize());
+  fa.play();
+})();
+</script>
+</body>
+</html>
