@@ -320,8 +320,8 @@ fn array_rule(cut: &[Poly], size: f64, grow: f64, sp: f64, d: f64, proj_min: Opt
     let g = um(grow);
     // grow, merge, shrink; a merged blob can only pass the bbox filter after the shrink if its
     // bbox is at least edge_len + 2g, so the (expensive) shrink is applied to those only
-    let grown = rg::merge_boxes(&cut.iter().map(|p| { let b = p.bbox(); debug_assert!(p.is_box()); Poly::rect(b.x1 - g, b.y1 - g, b.x2 + g, b.y2 + g) }).collect::<Vec<_>>());
-    let cand: Region = grown.into_iter().filter(|p| { let b = p.bbox(); b.width().min(b.height()) >= edge_len + 2 * g }).collect();
+    let grown: Vec<Poly> = cut.iter().map(|p| { let b = p.bbox(); debug_assert!(p.is_box()); Poly::rect(b.x1 - g, b.y1 - g, b.x2 + g, b.y2 + g) }).collect();
+    let cand = rg::merge_boxes_min_bbox(&grown, edge_len + 2 * g);
     let poss = rg::sized(&cand, -g, -g);
     let big: Region = poss.into_iter().filter(|p| { let b = p.bbox(); b.width().min(b.height()) >= edge_len }).collect();
     let all = rg::interacting_min(&big, cut, 16);
@@ -486,9 +486,9 @@ pub fn run(lib: &Library, top: &str, threads: usize, only: Option<&[String]>) ->
     let by_key: HashMap<LayerKey, &'static str> = LAYERS.iter().map(|(n, l, d)| ((*l, *d), *n)).collect();
     let work: Vec<(&'static str, &Vec<Poly>)> = flat.iter().filter_map(|(k, v)| by_key.get(k).map(|n| (*n, v))).collect();
     let merged: Vec<(&'static str, Region)> = if threads > 1 {
-        work.par_iter().map(|(n, v)| (*n, rg::merge(v))).collect()
+        work.par_iter().map(|(n, v)| (*n, rg::merge_boxes(v))).collect()
     } else {
-        work.iter().map(|(n, v)| (*n, rg::merge(v))).collect()
+        work.iter().map(|(n, v)| (*n, rg::merge_boxes(v))).collect()
     };
     let mut ctx = Ctx { layers: merged.into_iter().collect(), empty: vec![] };
     phases.push(("merge layers".to_string(), t.elapsed().as_secs_f64()));

@@ -428,32 +428,53 @@ fn grid_cell_for(n: usize, d: i32) -> i32 {
 
 /// Apply shielding to edge pairs found between edges of grid(s).
 /// `cands(i)` yields every edge that KLayout's scanner would also see next to the pair's edges.
+/// Run `f` over index ranges of 0..n, on the rayon pool when it has more than one thread.
+/// Results are concatenated in index order, so the output does not depend on the thread count.
+pub fn chunked<T: Send>(n: usize, f: impl Fn(std::ops::Range<usize>, &mut Vec<T>) + Sync) -> Vec<T> {
+    use rayon::prelude::*;
+    if rayon::current_num_threads() <= 1 || n < 8192 {
+        let mut out = Vec::new();
+        f(0..n, &mut out);
+        return out;
+    }
+    let step = 4096;
+    let parts: Vec<Vec<T>> = (0..n.div_ceil(step))
+        .into_par_iter()
+        .map(|c| {
+            let mut out = Vec::new();
+            f(c * step..((c + 1) * step).min(n), &mut out);
+            out
+        })
+        .collect();
+    parts.into_iter().flatten().collect()
+}
+
 fn apply_shielding(o: &CheckOpts, eps: Vec<(EdgePair, Edge, Edge)>, grids: &[&EdgeGrid]) -> Vec<EdgePair> {
     if !o.shielded {
         return eps.into_iter().map(|x| x.0).collect();
     }
-    let mut out = Vec::with_capacity(eps.len());
-    let mut scratch = Vec::new();
-    'ep: for (ep, e1, e2) in eps {
-        let n = ep.normalized();
-        // a shielding edge has to cut both connecting edges of the pair, so it touches the pair's bbox
-        // (and is then within d of both original edges, i.e. KLayout's scanner sees it too)
-        let bb = n.bbox();
-        for g in grids {
-            g.query(&bb, &mut scratch);
-            for &qi in &scratch {
-                let q = &g.edges[qi as usize].0;
-                if q == &e1 || q == &e2 {
-                    continue;
-                }
-                if shields(&n, q) {
-                    continue 'ep;
+    chunked(eps.len(), |range, out| {
+        let mut scratch = Vec::new();
+        'ep: for (ep, e1, e2) in &eps[range] {
+            let n = ep.normalized();
+            // a shielding edge has to cut both connecting edges of the pair, so it touches the pair's bbox
+            // (and is then within d of both original edges, i.e. KLayout's scanner sees it too)
+            let bb = n.bbox();
+            for g in grids {
+                g.query(&bb, &mut scratch);
+                for &qi in &scratch {
+                    let q = &g.edges[qi as usize].0;
+                    if q == e1 || q == e2 {
+                        continue;
+                    }
+                    if shields(&n, q) {
+                        continue 'ep;
+                    }
                 }
             }
+            out.push(*ep);
         }
-        out.push(ep);
-    }
-    out
+    })
 }
 
 /// Single-layer check (width: same polygon only; space: any two edges).
@@ -465,25 +486,27 @@ pub fn single_layer_check(o: &CheckOpts, polys: &[Poly]) -> Vec<EdgePair> {
         }
     }
     let grid = EdgeGrid::new(edges, grid_cell_for(polys.len(), o.d));
-    let mut found: Vec<(EdgePair, Edge, Edge)> = Vec::new();
-    let mut scratch = Vec::new();
     let width = o.rel == Relation::Width;
-    for (i, (a, pa)) in grid.edges.iter().enumerate() {
-        let bb = a.bbox().enlarged(o.d);
-        grid.query(&bb, &mut scratch);
-        for &j in &scratch {
-            if (j as usize) <= i {
-                continue;
-            }
-            let (b, pb) = &grid.edges[j as usize];
-            if width && pa != pb {
-                continue;
-            }
-            if let Some(ep) = check_edges(o, a, b) {
-                found.push((ep, *a, *b));
+    let found = chunked(grid.edges.len(), |range, out| {
+        let mut scratch = Vec::new();
+        for i in range {
+            let (a, pa) = &grid.edges[i];
+            let bb = a.bbox().enlarged(o.d);
+            grid.query(&bb, &mut scratch);
+            for &j in &scratch {
+                if (j as usize) <= i {
+                    continue;
+                }
+                let (b, pb) = &grid.edges[j as usize];
+                if width && pa != pb {
+                    continue;
+                }
+                if let Some(ep) = check_edges(o, a, b) {
+                    out.push((ep, *a, *b));
+                }
             }
         }
-    }
+    });
     let res = apply_shielding(o, found, &[&grid]);
     dedup_pairs(res)
 }
@@ -499,20 +522,25 @@ pub fn two_layer_check(o: &CheckOpts, subj: &[Poly], other: &[Poly]) -> Vec<Edge
         }
         EdgeGrid::new(edges, grid_cell_for(polys.len(), o.d))
     };
+    if subj.is_empty() || other.is_empty() {
+        return vec![];
+    }
     let gs = mk(subj);
     let go = mk(other);
-    let mut found = Vec::new();
-    let mut scratch = Vec::new();
-    for (a, _) in gs.edges.iter() {
-        let bb = a.bbox().enlarged(o.d);
-        go.query(&bb, &mut scratch);
-        for &j in &scratch {
-            let (b, _) = &go.edges[j as usize];
-            if let Some(ep) = check_edges(o, a, b) {
-                found.push((ep, *a, *b));
+    let found = chunked(gs.edges.len(), |range, out| {
+        let mut scratch = Vec::new();
+        for i in range {
+            let a = &gs.edges[i].0;
+            let bb = a.bbox().enlarged(o.d);
+            go.query(&bb, &mut scratch);
+            for &j in &scratch {
+                let (b, _) = &go.edges[j as usize];
+                if let Some(ep) = check_edges(o, a, b) {
+                    out.push((ep, *a, *b));
+                }
             }
         }
-    }
+    });
     let res = apply_shielding(o, found, &[&gs, &go]);
     dedup_pairs_ordered(res)
 }

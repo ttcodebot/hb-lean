@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   packages: read
+  actions: read
 defaults:
   run:
     shell: bash
@@ -62,7 +63,22 @@ jobs:
         with:
           name: precheck-rs-bin
           path: bin
+      - name: checkout tt-support-tools
+        uses: actions/checkout@v6
+        with:
+          repository: TinyTapeout/tt-support-tools
+          path: tt
+      - name: Reference submission (GDS, LEF, Verilog, info.yaml of run 42869460050)
+        uses: actions/download-artifact@v7
+        with:
+          name: tt_submission
+          path: submission
+          run-id: 42869460050
+          github-token: ${{ github.token }}
       - name: Rust vs KLayout
+        env:
+          PRECHECK_DIR: ${{ github.workspace }}/tt/precheck
+          SUBMISSION: ${{ github.workspace }}/submission
         run: chmod +x bin/precheck-rs && precheck-rs/bench/rust_vs_klayout.sh $GITHUB_WORKSPACE/bin/precheck-rs $GITHUB_WORKSPACE/out
       - uses: actions/upload-artifact@v7
         if: success() || failure()

@@ -64,6 +64,46 @@ pub fn merge(raw: &[Poly]) -> Region {
     }
     overlay(raw, &[], OverlayRule::Subject)
 }
+/// Merge boxes, keeping only merged blobs whose bbox is at least `min_dim` in both directions.
+/// Boxes are clustered by overlap first; clusters that are too small are dropped unmerged.
+pub fn merge_boxes_min_bbox(raw: &[Poly], min_dim: i32) -> Region {
+    let n = raw.len();
+    let grid = PolyGrid::new(raw);
+    let mut parent: Vec<u32> = (0..n as u32).collect();
+    fn find(p: &mut [u32], mut i: u32) -> u32 {
+        while p[i as usize] != i {
+            p[i as usize] = p[p[i as usize] as usize];
+            i = p[i as usize];
+        }
+        i
+    }
+    let mut scratch = Vec::new();
+    for i in 0..n {
+        grid.query(&raw[i].bbox(), &mut scratch);
+        for &j in &scratch {
+            if (j as usize) > i {
+                let (a, b) = (find(&mut parent, i as u32), find(&mut parent, j));
+                if a != b {
+                    parent[a as usize] = b;
+                }
+            }
+        }
+    }
+    let mut boxes: std::collections::HashMap<u32, BBox> = std::collections::HashMap::new();
+    for i in 0..n {
+        let r = find(&mut parent, i as u32);
+        boxes.entry(r).or_insert_with(BBox::empty).join(&raw[i].bbox());
+    }
+    let keep: Vec<Poly> = (0..n)
+        .filter(|&i| {
+            let b = boxes[&find(&mut parent, i as u32)];
+            b.width().min(b.height()) >= min_dim
+        })
+        .map(|i| raw[i].clone())
+        .collect();
+    merge(&keep).into_iter().filter(|p| { let b = p.bbox(); b.width().min(b.height()) >= min_dim }).collect()
+}
+
 /// Merge where most inputs do not touch anything else: connected groups (by bbox) are merged
 /// with the boolean engine, isolated boxes pass through.
 pub fn merge_boxes(raw: &[Poly]) -> Region {

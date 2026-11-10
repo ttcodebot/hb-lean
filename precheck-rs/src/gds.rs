@@ -308,6 +308,45 @@ impl Library {
         out
     }
 
+    /// Bounding box of everything below `top` (polygons and paths), without flattening.
+    pub fn bbox(&self, top: &str) -> crate::geom::BBox {
+        fn rec(lib: &Library, ci: usize, memo: &mut Vec<Option<crate::geom::BBox>>) -> crate::geom::BBox {
+            if let Some(b) = memo[ci] {
+                return b;
+            }
+            let c = &lib.cells[ci];
+            let mut bb = crate::geom::BBox::empty();
+            for s in &c.shapes {
+                let ring = match s.path {
+                    None => Some(s.pts.clone()),
+                    Some((w, pt)) => path_to_poly(&s.pts, w, pt),
+                };
+                for p in ring.iter().flatten() {
+                    bb.add(*p);
+                }
+            }
+            for r in &c.refs {
+                let Some(&ri) = lib.index.get(&r.cell) else { continue };
+                let cb = rec(lib, ri, memo);
+                if cb.is_empty() {
+                    continue;
+                }
+                for (i, j) in [(0, 0), (r.cols.max(1) - 1, 0), (0, r.rows.max(1) - 1), (r.cols.max(1) - 1, r.rows.max(1) - 1)] {
+                    let mut t = r.trans.clone();
+                    t.dx += i * r.col_step.0 + j * r.row_step.0;
+                    t.dy += i * r.col_step.1 + j * r.row_step.1;
+                    for p in [Pt::new(cb.x1, cb.y1), Pt::new(cb.x1, cb.y2), Pt::new(cb.x2, cb.y1), Pt::new(cb.x2, cb.y2)] {
+                        bb.add(t.apply(p));
+                    }
+                }
+            }
+            memo[ci] = Some(bb);
+            bb
+        }
+        let mut memo = vec![None; self.cells.len()];
+        rec(self, self.index[top], &mut memo)
+    }
+
     /// All texts below `top`, flattened: (layer, position, string)
     pub fn flat_texts(&self, top: &str) -> Vec<(LayerKey, Pt, String)> {
         let mut out = Vec::new();

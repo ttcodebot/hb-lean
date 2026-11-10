@@ -51,6 +51,7 @@ kl nolog_subset_verbose clean /tmp/drc-nolog "$SUB" verbose=true
 kl base_main stress $DRC "$MAIN"
 kl base_main injected $DRC "$MAIN"
 kl nolog_main_flat stress /tmp/drc-nolog "$MAIN" run_mode=flat
+kl nolog_main_t4 clean /tmp/drc-nolog "$MAIN" threads=4
 
 # --- KLayout engine through the Python API (same rules as the Rust slice, deep mode, no Ruby deck)
 for g in clean stress; do
@@ -65,4 +66,18 @@ done
 $PY $HERE/bench/lyrdb2json.py $OUT/nolog_main_flat.stress.xml $OUT/deck_flat.stress.json
 echo "== deck flat vs deck deep: stress"; $PY $HERE/bench/compare.py $OUT/deck_flat.stress.json $OUT/deck.stress.json | cut -c1-300 | tee -a $OUT/compare.txt
 echo "== klayout.db deep (python) vs deck deep: stress"; $PY $HERE/bench/compare.py $OUT/klpy_deep.stress.json $OUT/deck.stress.json | cut -c1-300 | tee -a $OUT/compare.txt
+
+# --- whole precheck.py (tt-support-tools), as shipped and with the PDK copy whose deck logger does not spawn pmap
+if [ -n "${PRECHECK_DIR:-}" ] && [ -d "$PRECHECK_DIR" ]; then
+  cp -a /pdk-precheck /tmp/pdk-nolog
+  sed -i 's/`pmap #{Process.pid} | tail -1`\[10, 40\].strip/"-"/' /tmp/pdk-nolog/gf180mcuD/libs.tech/klayout/tech/drc/gf180mcu.drc
+  grep -c 'pmap' /tmp/pdk-nolog/gf180mcuD/libs.tech/klayout/tech/drc/gf180mcu.drc
+  for v in base nolog base nolog; do
+    if [ $v = base ]; then export PDK_ROOT=/pdk-precheck; else export PDK_ROOT=/tmp/pdk-nolog; fi
+    t0=$(now)
+    (cd $PRECHECK_DIR && $PY precheck.py --gds $SUBMISSION/tt_submission/tt_um_example.gds --tech gf180mcuD 2>&1 | $PY $HERE/bench/stamp.py > $OUT/precheck_$v.log; echo "rc=${PIPESTATUS[0]}" >> $OUT/precheck_$v.log)
+    rec precheck_$v submission $t0 $(now)
+    grep -E "INFO: Running|Precheck passed|rc=|Error|FAIL" $OUT/precheck_$v.log | cut -c1-110
+  done
+fi
 cat $OUT/times.csv

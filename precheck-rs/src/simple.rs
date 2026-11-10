@@ -60,13 +60,7 @@ pub fn run(lib: &Library, expected_top: Option<&str>) -> SimpleResult {
 
     // top-level prBoundary rectangle must equal the bbox of everything (boundary_check, minus the DEF size)
     if let Some(tc) = lib.index.get(&top).map(|&i| &lib.cells[i]) {
-        let flat = lib.flatten(&top);
-        let mut bb = crate::geom::BBox::empty();
-        for polys in flat.values() {
-            for p in polys {
-                bb.join(&p.bbox());
-            }
-        }
+        let bb = lib.bbox(&top);
         let ok = tc.shapes.iter().any(|s| {
             s.layer == PR_BOUNDARY && s.path.is_none() && {
                 let mut b = crate::geom::BBox::empty();
