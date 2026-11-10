@@ -5,9 +5,10 @@ on:
       pdk:
         type: choice
         options: [sky130A, gf180mcuD, ihp-sg13cmos5l]
-      prune:
-        description: "PDK prune list file under pdk-keep/ (empty: keep all)"
-        default: ""
+      lean:
+        description: "prune to what traced runs touched (used/<tag>.txt)"
+        type: boolean
+        default: false
 permissions:
   contents: read
   packages: write
@@ -34,7 +35,13 @@ jobs:
           docker pull -q $IMG
           mkdir -p ctx
           sed 's#^#nix/store/#' closure/keep-$LL.txt > keep.list
-          docker export $(docker create $IMG) | sudo tar -x -C ctx -T keep.list
+          if [ "${{ inputs.lean }}" = true ]; then
+            cat closure/keep-$LL.txt closure/keep-klayout-3.1.0.dev4.txt > closure-all.txt
+            mkdir -p /tmp/emptypdk/libs.ref /tmp/emptypdk/libs.tech
+            python3 scripts/prune.py used/$TAG.txt closure-all.txt /tmp/emptypdk
+            cp keep.list keep-all.list
+          fi
+          docker export $(docker create $IMG) | sudo tar -x -C ctx -T keep.list || true
           docker inspect --format '{{json .Config.Env}}' $IMG > env.json
           python3 - <<'PY' >> $GITHUB_ENV
           import json, os
@@ -50,7 +57,8 @@ jobs:
           IMG=ghcr.io/librelane/librelane:3.1.0.dev4
           docker pull -q $IMG
           sed 's#^#nix/store/#' closure/keep-klayout-3.1.0.dev4.txt > keep2.list
-          docker export $(docker create $IMG) | sudo tar -x -C ctx -T keep2.list
+          if [ "${{ inputs.lean }}" = true ]; then cp keep-all.list keep2.list; fi
+          docker export $(docker create $IMG) | sudo tar -x -C ctx -T keep2.list || true
           echo "PRECHECK_TOOLS=/nix/store/$(grep -E '^.{33}klayout-[0-9.]+$' closure/keep-klayout-3.1.0.dev4.txt)/bin" >> $GITHUB_ENV
           sudo du -sh ctx/nix
       - name: Fetch PDK with the image's own ciel
@@ -61,9 +69,9 @@ jobs:
           V=ctx/pdk/ciel/$FAM/versions/$VER
           ls -la ctx/pdk $V
           for d in $V/*/; do n=$(basename $d); if [ "$n" != "${{ inputs.pdk }}" ]; then rm -rf "$d" "ctx/pdk/$n"; fi; done
-          if [ -n "${{ inputs.prune }}" ]; then
-            P=$V/${{ inputs.pdk }}
-            ( cd $P && for d in libs.ref/*/* libs.tech/*; do grep -qxF "$d" $GITHUB_WORKSPACE/pdk-keep/${{ inputs.prune }} || rm -rf "$d"; done )
+          if [ "${{ inputs.lean }}" = true ]; then
+            python3 scripts/prune.py used/$TAG.txt closure-all.txt $V/${{ inputs.pdk }}
+            TAG=$TAG-lean; echo "TAG=$TAG" >> $GITHUB_ENV
           fi
           du -sh ctx/pdk; du -sh $V/*/libs.*/* | sort -h | tail -40
       - name: Build and push

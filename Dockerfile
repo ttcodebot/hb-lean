@@ -19,10 +19,13 @@ ENV XDG_CACHE_HOME=/opt/cache \
     TOOLS_PATH=${NIX_PATH_DIRS} \
     PATH=${NIX_PATH_DIRS}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/tt/bin
 COPY tt-requirements.txt precheck-requirements.txt /opt/
-RUN /usr/local/bin/python3 -m venv /opt/tt \
-    && /opt/tt/bin/pip install --no-cache-dir -r /opt/tt-requirements.txt \
+# yowasp-yosys (WASM Yosys, ~350 MB with its compile cache) is replaced by the image's native Yosys.
+RUN grep -viE '^(yowasp|wasmtime)' /opt/tt-requirements.txt > /tmp/tt.txt \
+    && grep -viE '^(yowasp|wasmtime)' /opt/precheck-requirements.txt > /tmp/pc.txt \
+    && /usr/local/bin/python3 -m venv /opt/tt \
+    && /opt/tt/bin/pip install --no-cache-dir --no-deps -r /tmp/tt.txt \
     && /usr/local/bin/python3 -m venv /opt/precheck \
-    && /opt/precheck/bin/pip install --no-cache-dir -r /opt/precheck-requirements.txt \
-    && /opt/tt/bin/yowasp-yosys -V && /opt/precheck/bin/yowasp-yosys -V \
-    && chmod -R a+rX /opt/cache
+    && /opt/precheck/bin/pip install --no-cache-dir --no-deps -r /tmp/pc.txt \
+    && printf '#!/bin/sh\nexec yosys "$@"\n' > /usr/local/bin/yowasp-yosys && chmod +x /usr/local/bin/yowasp-yosys \
+    && rm /tmp/tt.txt /tmp/pc.txt
 COPY pdk /pdk
