@@ -12,6 +12,10 @@ on:
       tt_args:
         description: "extra tt_tool.py args"
         default: ""
+      trace:
+        description: "strace file access (slow; for pruning the image)"
+        type: boolean
+        default: false
 permissions:
   contents: read
   packages: read
@@ -25,6 +29,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     env:
       TT_ARGS: ${{ inputs.tt_args }}
+      TRACE: ${{ inputs.trace && 'strace -f -qq -e trace=open,openat,execve,stat,access,readlink,statx,newfstatat -o /tmp/trace/t -ff' || '' }}
     steps:
       - name: checkout project
         uses: actions/checkout@v6
@@ -36,15 +41,18 @@ jobs:
         with:
           repository: TinyTapeout/tt-support-tools
           path: tt
+      - name: Install strace
+        if: inputs.trace
+        run: apt-get update -qq && apt-get install -y -qq strace && mkdir -p /tmp/trace
       - name: Fetch verilog and build config
-        run: /opt/tt/bin/python tt/tt_tool.py --create-user-config $TT_ARGS
+        run: $TRACE /opt/tt/bin/python tt/tt_tool.py --create-user-config $TT_ARGS
       - name: Harden
-        run: /opt/tt/bin/python tt/tt_tool.py --harden --no-docker $TT_ARGS
+        run: $TRACE /opt/tt/bin/python tt/tt_tool.py --harden --no-docker $TT_ARGS
       - name: Summaries
         run: |
-          /opt/tt/bin/python tt/tt_tool.py --print-warnings $TT_ARGS >> $GITHUB_STEP_SUMMARY
-          /opt/tt/bin/python tt/tt_tool.py --print-stats $TT_ARGS >> $GITHUB_STEP_SUMMARY
-          /opt/tt/bin/python tt/tt_tool.py --print-cell-category $TT_ARGS >> $GITHUB_STEP_SUMMARY
+          $TRACE /opt/tt/bin/python tt/tt_tool.py --print-warnings $TT_ARGS >> $GITHUB_STEP_SUMMARY
+          $TRACE /opt/tt/bin/python tt/tt_tool.py --print-stats $TT_ARGS >> $GITHUB_STEP_SUMMARY
+          $TRACE /opt/tt/bin/python tt/tt_tool.py --print-cell-category $TT_ARGS >> $GITHUB_STEP_SUMMARY
       - name: Publish build logs
         if: success() || failure()
         uses: actions/upload-artifact@v7
@@ -54,7 +62,7 @@ jobs:
             src/*
             runs/wokwi/*
       - name: Prepare tt_submission
-        run: /opt/tt/bin/python tt/tt_tool.py --create-tt-submission $TT_ARGS
+        run: $TRACE /opt/tt/bin/python tt/tt_tool.py --create-tt-submission $TT_ARGS
       - name: Publish tt_submission
         uses: actions/upload-artifact@v7
         with:
@@ -66,7 +74,7 @@ jobs:
             info.yaml
             LICENSE
       - name: Render PNG
-        run: /opt/tt/bin/python tt/tt_tool.py --create-png $TT_ARGS 2>&1 || echo "WARNING - PNG render failed"
+        run: $TRACE /opt/tt/bin/python tt/tt_tool.py --create-png $TT_ARGS 2>&1 || echo "WARNING - PNG render failed"
       - name: Upload PNG
         uses: actions/upload-artifact@v7
         with:
@@ -77,10 +85,44 @@ jobs:
         run: |
           export PATH="${PRECHECK_TOOLS:+$PRECHECK_TOOLS:}/opt/precheck/bin:$PATH"
           klayout -v
-          /opt/precheck/bin/python precheck.py --gds $GITHUB_WORKSPACE/tt_submission/*.gds* --tech $PDK
+          $TRACE /opt/precheck/bin/python precheck.py --gds $GITHUB_WORKSPACE/tt_submission/*.gds* --tech $PDK
       - name: Upload precheck reports
         if: success() || failure()
         uses: actions/upload-artifact@v7
         with:
           name: precheck_reports
           path: tt/precheck/reports
+      - name: Summarise accessed files
+        if: inputs.trace && (success() || failure())
+        run: |
+          cat /tmp/trace/t.* | grep -v ENOENT | grep -oE '"/(nix|pdk|opt|usr|lib)[^"]*"' | tr -d '"' | sort -u > /tmp/accessed-raw.txt
+          /usr/local/bin/python3 - <<'PY'
+          import os
+          seen = set()
+          for p in open("/tmp/accessed-raw.txt").read().split("\n"):
+              if not p or not os.path.lexists(p): continue
+              # walk the path component by component so symlink hops are recorded too
+              cur = "/"
+              stack = [x for x in p.split("/") if x]
+              hops = 0
+              while stack and hops < 200:
+                  cur = os.path.join(cur, stack.pop(0))
+                  if os.path.islink(cur):
+                      seen.add(cur); hops += 1
+                      tgt = os.path.normpath(os.path.join(os.path.dirname(cur), os.readlink(cur)))
+                      stack = [x for x in tgt.split("/") if x] + stack
+                      cur = "/"
+              if os.path.isfile(cur) or os.path.islink(cur): seen.add(cur)
+          with open("/tmp/accessed.txt", "w") as f:
+              for p in sorted(seen):
+                  sz = os.path.getsize(p) if os.path.isfile(p) and not os.path.islink(p) else 0
+                  f.write(f"{sz}\t{p}\n")
+          PY
+          wc -l /tmp/accessed.txt
+          awk -F'\t' '{split($2,a,"/"); k="/"a[2]; s[k]+=$1} END {for (k in s) printf "%8.1f MB %s\n", s[k]/1e6, k}' /tmp/accessed.txt
+      - name: Upload accessed file list
+        if: inputs.trace && (success() || failure())
+        uses: actions/upload-artifact@v7
+        with:
+          name: accessed
+          path: /tmp/accessed.txt
