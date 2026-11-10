@@ -29,3 +29,4 @@ RUN grep -viE '^(yowasp|wasmtime)' /opt/tt-requirements.txt > /tmp/tt.txt \
     && printf '#!/bin/sh\nexec yosys "$@"\n' > /usr/local/bin/yowasp-yosys && chmod +x /usr/local/bin/yowasp-yosys \
     && rm /tmp/tt.txt /tmp/pc.txt
 COPY pdk /pdk
+COPY pdk-precheck /pdk-precheck

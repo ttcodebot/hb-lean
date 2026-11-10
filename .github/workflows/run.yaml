@@ -94,7 +94,8 @@ jobs:
         working-directory: tt/precheck
         run: |
           export PATH="${PRECHECK_TOOLS:+$PRECHECK_TOOLS:}/opt/precheck/bin:$PATH"
-          klayout -v
+          if [ -d /pdk-precheck/$PDK ]; then export PDK_ROOT=/pdk-precheck; fi
+          echo "precheck PDK_ROOT=$PDK_ROOT"; klayout -v
           $TRACE /opt/precheck/bin/python precheck.py --gds $GITHUB_WORKSPACE/tt_submission/*.gds* --tech $PDK
       - name: Upload precheck reports
         if: success() || failure()
