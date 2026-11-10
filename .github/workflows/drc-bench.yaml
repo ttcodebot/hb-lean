@@ -30,3 +30,42 @@ jobs:
         with:
           name: klayout_variants
           path: out
+  build:
+    if: inputs.what == 'rust'
+    runs-on: ubuntu-24.04
+    # same Debian release as the gf-lean image, so the glibc binary runs there
+    container: rust:1-bookworm
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build
+        working-directory: precheck-rs
+        run: |
+          cargo --version
+          cargo build --release
+          ls -la target/release/precheck-rs
+      - uses: actions/upload-artifact@v7
+        with:
+          name: precheck-rs-bin
+          path: precheck-rs/target/release/precheck-rs
+  rust:
+    if: inputs.what == 'rust'
+    needs: build
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/${{ github.repository }}:gf-lean
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: precheck-rs-bin
+          path: bin
+      - name: Rust vs KLayout
+        run: chmod +x bin/precheck-rs && precheck-rs/bench/rust_vs_klayout.sh $GITHUB_WORKSPACE/bin/precheck-rs $GITHUB_WORKSPACE/out
+      - uses: actions/upload-artifact@v7
+        if: success() || failure()
+        with:
+          name: rust_vs_klayout
+          path: out
