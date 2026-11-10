@@ -5,7 +5,9 @@ import os, re, shutil, sys
 
 used = sorted({os.path.normpath(l.strip()) for l in open(sys.argv[1]) if l.strip()})
 closure = set(open(sys.argv[2]).read().split())
-store = sorted({p.split("/")[3] for p in used if p.startswith("/nix/store/")} & closure)
+store = {p.split("/")[3] for p in used if p.startswith("/nix/store/")} & closure
+# Shebang interpreters are opened by the kernel, so the trace does not show them.
+store = sorted(store | {n for n in closure if re.match(r"^.{33}bash-[0-9]", n)})
 open("keep.list", "w").write("".join(f"nix/store/{n}\n" for n in store))
 print(f"nix: {len(store)} of {len(closure)} closure paths kept")
 
