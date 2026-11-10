@@ -1,0 +1,32 @@
+name: drc-bench
+run-name: "drc-bench ${{ inputs.what }}"
+on:
+  workflow_dispatch:
+    inputs:
+      what:
+        description: "klayout (deck variants) | rust (build + compare)"
+        default: klayout
+permissions:
+  contents: read
+  packages: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  klayout:
+    if: inputs.what == 'klayout'
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/${{ github.repository }}:gf-lean
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: KLayout deck variants
+        run: precheck-rs/bench/klayout_variants.sh $GITHUB_WORKSPACE/out
+      - uses: actions/upload-artifact@v7
+        if: success() || failure()
+        with:
+          name: klayout_variants
+          path: out
