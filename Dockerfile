@@ -2,7 +2,7 @@
 # Tools: the subset of the LibreLane image's Nix closure that the flow runs.
 FROM python:3.11-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git jq ca-certificates librsvg2-bin pngquant fontconfig fonts-dejavu-core \
+      git jq ca-certificates librsvg2-bin pngquant fontconfig fonts-dejavu-core procps \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system --add safe.directory '*'
 COPY nix /nix
