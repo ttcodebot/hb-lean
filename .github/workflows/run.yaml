@@ -47,6 +47,13 @@ jobs:
       - name: Install strace
         if: inputs.trace
         run: apt-get update -qq && apt-get install -y -qq strace && mkdir -p /tmp/trace
+      - name: Tool check
+        run: |
+          set +e
+          command -v yowasp-yosys yosys openroad klayout magic; cat $(command -v yowasp-yosys) | head -3
+          yowasp-yosys -V; echo "rc=$?"
+          yowasp-yosys -qp "read_verilog -lib -sv src/project.v; hierarchy -top tt_um_example; proc; write_json /tmp/ports.json"; echo "rc=$?"; ls -la /tmp/ports.json
+          true
       - name: Fetch verilog and build config
         run: $TRACE /opt/tt/bin/python tt/tt_tool.py --create-user-config $TT_ARGS
       - name: Harden
