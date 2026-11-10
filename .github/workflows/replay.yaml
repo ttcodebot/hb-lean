@@ -50,6 +50,7 @@ jobs:
       - name: Replay PnR steps in one OpenROAD process
         run: |
           cd runs/wokwi
+          ls -la *-openroad-cts/ /tmp/wrap; cat *-openroad-cts/COMMANDS; echo "PATH=$PATH"; command -v openroad
           STEPS=""
           for d in [0-9]*-openroad-*; do
             n=${d%%-*}
